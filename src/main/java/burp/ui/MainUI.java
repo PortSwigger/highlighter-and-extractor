@@ -1,13 +1,11 @@
 package burp.ui;
 
-import burp.Config;
-import burp.yaml.LoadConfig;
-import burp.yaml.SetConfig;
-
-import com.squareup.okhttp.OkHttpClient;
-import com.squareup.okhttp.Request;
-import com.squareup.okhttp.Response;
-import java.io.FileOutputStream;
+import burp.config.ConfigEntry;
+import burp.config.ConfigLoader;
+import burp.rule.RuleProcessor;
+import burp.ui.board.Databoard;
+import burp.ui.board.MessagePanel;
+import burp.ui.rule.RulePane;
 import javax.swing.*;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
@@ -18,59 +16,40 @@ import java.awt.event.*;
 import java.util.Map;
 
 /**
- * @author LinChen
+ * @author LinChen && EvilChen
  */
 
-public class MainUI extends JPanel{
-    private final LoadConfig loadConn = new LoadConfig();
+public class MainUI extends JPanel {
 
-    public MainUI() {
+    public MainUI(MessagePanel messagePanel) {
+        databoardPanel = new Databoard(messagePanel);
         initComponents();
     }
 
-    public void closeTabActionPerformed(ActionEvent e){
-        if (ruleTabbedPane.getTabCount()>2){
-            if (ruleTabbedPane.getSelectedIndex()!=0){
-                SetConfig setConn = new SetConfig();
-                setConn.deleteRules(ruleTabbedPane.getTitleAt(ruleTabbedPane.getSelectedIndex()));
-                ruleTabbedPane.remove(ruleTabbedPane.getSelectedIndex());
-                ruleTabbedPane.setSelectedIndex(ruleTabbedPane.getSelectedIndex()-1);
-            } else {
-                SetConfig setConn = new SetConfig();
-                setConn.deleteRules(ruleTabbedPane.getTitleAt(ruleTabbedPane.getSelectedIndex()));
-                ruleTabbedPane.remove(ruleTabbedPane.getSelectedIndex());
-                ruleTabbedPane.setSelectedIndex(ruleTabbedPane.getSelectedIndex());
-            }
+    public void closeTabActionPerformed(ActionEvent e) {
+        if (ruleTabbedPane.getTabCount() > 2 && ruleTabbedPane.getSelectedIndex() != 0) {
+            String title = ruleTabbedPane.getTitleAt(ruleTabbedPane.getSelectedIndex());
+            new RuleProcessor().deleteRuleGroup(title);
+            ruleTabbedPane.remove(ruleTabbedPane.getSelectedIndex());
+            ruleTabbedPane.setSelectedIndex(ruleTabbedPane.getSelectedIndex() - 1);
         }
     }
 
     private void onlineUpdateActionPerformed(ActionEvent e) {
-        String url = "https://raw.githubusercontent.com/gh0stkey/HaE/gh-pages/Config.yml";
-        OkHttpClient httpClient = new OkHttpClient();
-        Request httpRequest = new Request.Builder().url(url).get().build();
-        try {
-            Response httpResponse = httpClient.newCall(httpRequest).execute();
-            // 获取官方规则文件，在线更新写入
-            String configFile = configTextField.getText();
-            FileOutputStream fileOutputStream = new FileOutputStream(configFile);
-            fileOutputStream.write(httpResponse.body().bytes());
-            JOptionPane.showMessageDialog(null, "Config file updated successfully!", "Error",
-                    JOptionPane.INFORMATION_MESSAGE);
-        } catch (Exception ignored) {
-            JOptionPane.showMessageDialog(null, "Please check your network!", "Error",
-                    JOptionPane.ERROR_MESSAGE);
+        // 添加提示框防止用户误触导致配置更新
+        int retCode = JOptionPane.showConfirmDialog(null, "Do you want to update rules?", "Info", JOptionPane.YES_NO_OPTION);
+        if (retCode == JOptionPane.YES_OPTION) {
+            ConfigLoader.initRules();
+            reloadRule();
         }
-
-        new LoadConfig();
-        reloadRule();
     }
 
     private void reloadRule(){
         ruleTabbedPane.removeAll();
         ruleSwitch.setListen(false);
-        Map<String,Object[][]> rules = LoadConfig.getRules();
+        Map<String,Object[][]> rules = ConfigLoader.getRules();
         rules.keySet().forEach(
-                i-> ruleTabbedPane.addTab(
+                i -> ruleTabbedPane.addTab(
                         i,
                         new RulePane(rules.get(i), ruleTabbedPane)
                 )
@@ -84,20 +63,20 @@ public class MainUI extends JPanel{
     }
 
     private void excludeSuffixSaveActionPerformed(ActionEvent e) {
-        LoadConfig loadCon = new LoadConfig();
-        loadCon.setExcludeSuffix(excludeSuffixTextField.getText());
+        ConfigLoader.setExcludeSuffix(excludeSuffixTextField.getText());
     }
+
     private void initComponents() {
-        mainTabbedPane = new JTabbedPane();
+        JTabbedPane mainTabbedPane = new JTabbedPane();
         ruleTabbedPane = new JTabbedPane();
-        rulePanel = new JPanel();
-        configTextField = new JTextField();
-        configLabel = new JLabel();
-        onlineUpdateButton = new JButton();
-        reloadButton = new JButton();
-        excludeSuffixLabel = new JLabel();
+        JPanel rulePanel = new JPanel();
+        rulesPathTextField = new JTextField();
+        JLabel rulesPathLabel = new JLabel();
+        JButton onlineUpdateButton = new JButton();
+        JButton reloadButton = new JButton();
+        JLabel excludeSuffixLabel = new JLabel();
         excludeSuffixTextField = new JTextField();
-        excludeSuffixSaveButton = new JButton();
+        JButton excludeSuffixSaveButton = new JButton();
 
         setLayout(new GridBagLayout());
         ((GridBagLayout)getLayout()).columnWidths = new int[] {0, 0};
@@ -115,13 +94,13 @@ public class MainUI extends JPanel{
                 ((GridBagLayout) rulePanel.getLayout()).columnWeights = new double[] {0.0, 1.0, 0.0, 0.0, 1.0E-4};
                 ((GridBagLayout) rulePanel.getLayout()).rowWeights = new double[] {0.0, 0.0, 1.0E-4};
 
-                configTextField.setEditable(false);
-                rulePanel.add(configTextField, new GridBagConstraints(1, 0, 1, 1, 0.0, 0.0,
+                rulesPathTextField.setEditable(false);
+                rulePanel.add(rulesPathTextField, new GridBagConstraints(1, 0, 1, 1, 0.0, 0.0,
                         GridBagConstraints.CENTER, GridBagConstraints.BOTH,
                         new Insets(5, 0, 5, 5), 0, 0));
 
-                configLabel.setText("Config Path:");
-                rulePanel.add(configLabel, new GridBagConstraints(0, 0, 1, 1, 0.0, 0.0,
+                rulesPathLabel.setText("Rules Path:");
+                rulePanel.add(rulesPathLabel, new GridBagConstraints(0, 0, 1, 1, 0.0, 0.0,
                         GridBagConstraints.WEST, GridBagConstraints.VERTICAL,
                         new Insets(5, 5, 5, 5), 0, 0));
 
@@ -153,39 +132,33 @@ public class MainUI extends JPanel{
                         new Insets(0, 0, 0, 5), 0, 0));
             }
             mainTabbedPane.addTab("Config", rulePanel);
-            mainTabbedPane.addTab("Databoard", databoardPanel);
+            mainTabbedPane.addTab("Databoard", this.databoardPanel);
         }
         add(mainTabbedPane, new GridBagConstraints(0, 0, 1, 1, 0.0, 0.0,
                 GridBagConstraints.CENTER, GridBagConstraints.BOTH,
                 new Insets(0, 0, 0, 0), 0, 0));
 
-        Config.ruleConfig.keySet().forEach(i-> ruleTabbedPane.addTab(i,new RulePane(Config.ruleConfig.get(i),
+        ConfigEntry.globalRules.keySet().forEach(i-> ruleTabbedPane.addTab(i, new RulePane(
+                ConfigEntry.globalRules.get(i),
                 ruleTabbedPane)));
 
-        ruleTabbedPane.addTab("...",new JLabel());
+        ruleTabbedPane.addTab("...", new JLabel());
 
-        configTextField.setText(LoadConfig.getConfigPath());
-        excludeSuffixTextField.setText(loadConn.getExcludeSuffix());
+        rulesPathTextField.setText(ConfigLoader.getRulesFilePath());
+        excludeSuffixTextField.setText(ConfigLoader.getExcludeSuffix());
         ruleSwitch = new TabTitleEditListener(ruleTabbedPane);
         ruleTabbedPane.addChangeListener(ruleSwitch);
         ruleTabbedPane.addMouseListener(ruleSwitch);
-        closeTabMenuItem.addActionListener(this::closeTabActionPerformed);
-        tabMenu.add(closeTabMenuItem);
+        deleteMenuItem.addActionListener(this::closeTabActionPerformed);
+        tabMenu.add(deleteMenuItem);
     }
 
-    private JTabbedPane mainTabbedPane;
     private JTabbedPane ruleTabbedPane;
-    private JPanel rulePanel;
-    private JTextField configTextField;
-    private JLabel configLabel;
-    private JButton onlineUpdateButton;
-    private JButton reloadButton;
-    private JLabel excludeSuffixLabel;
+    private JTextField rulesPathTextField;
     private JTextField excludeSuffixTextField;
-    private JButton excludeSuffixSaveButton;
-    private Databoard databoardPanel = new Databoard();
+    private Databoard databoardPanel;
     protected static JPopupMenu tabMenu = new JPopupMenu();
-    private JMenuItem closeTabMenuItem = new JMenuItem("Delete");
+    private final JMenuItem deleteMenuItem = new JMenuItem("Delete");
     private TabTitleEditListener ruleSwitch;
 }
 
@@ -198,7 +171,7 @@ class TabTitleEditListener extends MouseAdapter implements ChangeListener, Docum
     protected Dimension dim;
     protected Component tabComponent;
     protected Boolean isRenameOk = false;
-    protected SetConfig setConfig = new SetConfig();
+    protected RuleProcessor ruleProcessor = new RuleProcessor();
 
     protected final Action startEditing = new AbstractAction() {
         @Override public void actionPerformed(ActionEvent e) {
@@ -222,7 +195,7 @@ class TabTitleEditListener extends MouseAdapter implements ChangeListener, Docum
             if (editingIndex >= 0 && !title.isEmpty()) {
                 String oldName = ruleEditTabbedPane.getTitleAt(editingIndex);
                 ruleEditTabbedPane.setTitleAt(editingIndex, title);
-                setConfig.rename(oldName,title);
+                ruleProcessor.renameRuleGroup(oldName,title);
             }
             cancelEditing.actionPerformed(null);
         }
@@ -280,7 +253,7 @@ class TabTitleEditListener extends MouseAdapter implements ChangeListener, Docum
 
     public void newTab(){
         Object[][] data = new Object[][]{{false, "New Name", "(New Regex)", "gray", "any", "nfa", false}};
-        insertTab(ruleEditTabbedPane, setConfig.newRules(),data);
+        insertTab(ruleEditTabbedPane, ruleProcessor.newRule(),data);
     }
 
     public void insertTab(JTabbedPane pane,String title,Object[][] data){
