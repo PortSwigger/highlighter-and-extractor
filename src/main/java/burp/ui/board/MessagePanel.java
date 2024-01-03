@@ -21,12 +21,10 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTable;
-import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableModel;
@@ -158,6 +156,9 @@ public class MessagePanel extends AbstractTableModel implements IMessageEditorCo
     @Override
     public Object getValueAt(int rowIndex, int columnIndex)
     {
+        if (filteredLog.isEmpty()) {
+            return "";
+        }
         LogEntry logEntry = filteredLog.get(rowIndex);
         switch (columnIndex)
         {
@@ -181,9 +182,13 @@ public class MessagePanel extends AbstractTableModel implements IMessageEditorCo
     public void applyHostFilter(String filterText) {
         filteredLog.clear();
         fireTableDataChanged();
+        String cleanedText = StringHelper.replaceFirstOccurrence(filterText, "*.", "");
+
         for (LogEntry entry : log) {
             String host = entry.getUrl().getHost();
-            if (StringHelper.matchFromEnd(host, filterText) || filterText.contains("*")) {
+            if (filterText.contains("*.") && StringHelper.matchFromEnd(host, cleanedText)) {
+                filteredLog.add(entry);
+            } else if (host.equals(filterText) || filterText.contains("*")) {
                 filteredLog.add(entry);
             }
         }
@@ -264,6 +269,7 @@ public class MessagePanel extends AbstractTableModel implements IMessageEditorCo
             }
         }
         fireTableDataChanged();
+        logTable.lastSelectedIndex = -1;
     }
 
     public void deleteByHost(String filterText) {
@@ -306,13 +312,13 @@ public class MessagePanel extends AbstractTableModel implements IMessageEditorCo
         return currentlyDisplayedItem.getHttpService();
     }
 
-    public void add(IHttpRequestResponse messageInfo, String comment, String length, String color) {
+    public void add(IHttpRequestResponse messageInfo, String comment, String color) {
         synchronized(log) {
             IRequestInfo iRequestInfo = helpers.analyzeRequest(messageInfo);
             URL url = iRequestInfo.getUrl();
             String method = iRequestInfo.getMethod();
             String status = String.valueOf(helpers.analyzeResponse(messageInfo.getResponse()).getStatusCode());
-
+            String length = String.valueOf(messageInfo.getResponse().length);
             LogEntry logEntry = new LogEntry(callbacks.saveBuffersToTempFiles(messageInfo), method, url, comment, length, color, status);
 
             try {
@@ -327,8 +333,8 @@ public class MessagePanel extends AbstractTableModel implements IMessageEditorCo
                         byte[] reqByteB = reqResMessage.getRequest();
                         byte[] resByteB = reqResMessage.getResponse();
                         try {
-                            // 采用匹配数据结果比对
-                            if (areMapsEqual(getCacheData(reqByteB), getCacheData(reqByteA)) && areMapsEqual(getCacheData(resByteB), getCacheData(resByteA))) {
+                            // 通过URL、请求和响应报文、匹配数据内容，多维度进行对比
+                            if ((entry.getUrl().toString().equals(url.toString()) || (Arrays.equals(reqByteB, reqByteA) || Arrays.equals(resByteB, resByteA))) && (areMapsEqual(getCacheData(reqByteB), getCacheData(reqByteA)) && areMapsEqual(getCacheData(resByteB), getCacheData(resByteA)))) {
                                 isDuplicate = true;
                                 break;
                             }
@@ -355,6 +361,9 @@ public class MessagePanel extends AbstractTableModel implements IMessageEditorCo
     }
 
     private boolean areMapsEqual(Map<String, Map<String, Object>> map1, Map<String, Map<String, Object>> map2) {
+        if (map1 == null || map2 == null) {
+            return false;
+        }
         if (map1.size() != map2.size()) {
             return false;
         }
@@ -398,7 +407,10 @@ public class MessagePanel extends AbstractTableModel implements IMessageEditorCo
 
     public class Table extends JTable {
         LogEntry logEntry;
-        private SwingWorker<Void, Void> currentWorker;
+        private SwingWorker<Object, Void> currentWorker;
+        // 设置响应报文返回的最大长度为3MB
+        private final int MAX_LENGTH = 3145728;
+        private int lastSelectedIndex = -1;
 
         public Table(TableModel tableModel) {
             super(tableModel);
@@ -407,35 +419,50 @@ public class MessagePanel extends AbstractTableModel implements IMessageEditorCo
         @Override
         public void changeSelection(int row, int col, boolean toggle, boolean extend) {
             super.changeSelection(row, col, toggle, extend);
+            int selectedIndex = convertRowIndexToModel(row);
+            if (lastSelectedIndex != selectedIndex) {
+                lastSelectedIndex = selectedIndex;
+                logEntry = filteredLog.get(selectedIndex);
 
-            logEntry = filteredLog.get(convertRowIndexToModel(row));
-            requestViewer.setMessage("Loading...".getBytes(), true);
-            responseViewer.setMessage("Loading...".getBytes(), false);
-            currentlyDisplayedItem = logEntry.getRequestResponse();
+                requestViewer.setMessage("Loading...".getBytes(), true);
+                responseViewer.setMessage("Loading...".getBytes(), false);
+                currentlyDisplayedItem = logEntry.getRequestResponse();
 
-            // 取消之前的后台任务
-            if (currentWorker != null && !currentWorker.isDone()) {
-                currentWorker.cancel(true);
-            }
-            // 在后台线程中执行耗时操作
-            SwingWorker<Void, Void> worker = new SwingWorker<Void, Void>() {
-                @Override
-                protected Void doInBackground() throws Exception {
-                    refreshMessage();
-                    return null;
+                if (currentWorker != null && !currentWorker.isDone()) {
+                    currentWorker.cancel(true);
                 }
-            };
-            // 设置当前后台任务
-            currentWorker = worker;
-            // 启动后台线程
-            worker.execute();
-        }
 
-        private synchronized void refreshMessage() {
-            SwingUtilities.invokeLater(() -> {
-                requestViewer.setMessage(logEntry.getRequestResponse().getRequest(), true);
-                responseViewer.setMessage(logEntry.getRequestResponse().getResponse(), false);
-            });
+                currentWorker = new SwingWorker<Object, Void>() {
+                    @Override
+                    protected byte[][] doInBackground() throws Exception {
+                        byte[] requestByte = logEntry.getRequestResponse().getRequest();
+                        byte[] responseByte = logEntry.getRequestResponse().getResponse();
+
+                        if (responseByte.length > MAX_LENGTH) {
+                            String ellipsis = "\r\n......";
+                            responseByte = Arrays.copyOf(responseByte, MAX_LENGTH + ellipsis.length());
+                            byte[] ellipsisBytes = ellipsis.getBytes();
+                            System.arraycopy(ellipsisBytes, 0, responseByte, MAX_LENGTH, ellipsisBytes.length);
+                        }
+
+                        return new byte[][] {requestByte, responseByte};
+                    }
+
+                    @Override
+                    protected void done() {
+                        if (!isCancelled()) {
+                            try {
+                                byte[][] result = (byte[][]) get();
+                                requestViewer.setMessage(result[0], true);
+                                responseViewer.setMessage(result[1], false);
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
+                        }
+                    }
+                };
+                currentWorker.execute();
+            }
         }
     }
 
