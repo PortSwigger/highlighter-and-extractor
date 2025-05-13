@@ -3,7 +3,6 @@ package hae.component;
 import burp.api.montoya.MontoyaApi;
 import hae.component.board.Databoard;
 import hae.component.board.message.MessageTableModel;
-import hae.component.config.Config;
 import hae.component.rule.Rules;
 import hae.utils.ConfigLoader;
 
@@ -37,25 +36,16 @@ public class Main extends JPanel {
 
         // 新增Logo
         JTabbedPane HaETabbedPane = new JTabbedPane();
-        HaETabbedPane.addTab("", getImageIcon(false), mainTabbedPane);
+        boolean isDarkBg = isDarkBg(HaETabbedPane);
+        HaETabbedPane.addTab("", getImageIcon(isDarkBg), mainTabbedPane);
         // 中文Slogan：赋能白帽，高效作战
         HaETabbedPane.addTab(" Highlighter and Extractor - Empower ethical hacker for efficient operations. ", null);
         HaETabbedPane.setEnabledAt(1, false);
         HaETabbedPane.addPropertyChangeListener("background", new PropertyChangeListener() {
             @Override
             public void propertyChange(PropertyChangeEvent e) {
-                boolean isDarkBg = isDarkBg();
+                boolean isDarkBg = isDarkBg(HaETabbedPane);
                 HaETabbedPane.setIconAt(0, getImageIcon(isDarkBg));
-            }
-
-            private boolean isDarkBg() {
-                Color bg = HaETabbedPane.getBackground();
-                int r = bg.getRed();
-                int g = bg.getGreen();
-                int b = bg.getBlue();
-                int avg = (r + g + b) / 3;
-
-                return avg < 128;
             }
         });
 
@@ -67,7 +57,17 @@ public class Main extends JPanel {
         Rules rules = new Rules(api, configLoader);
         mainTabbedPane.addTab("Rules", rules);
         mainTabbedPane.addTab("Databoard", new Databoard(api, configLoader, messageTableModel));
-        mainTabbedPane.addTab("Config", new Config(api, configLoader, rules));
+        mainTabbedPane.addTab("Config", new Config(api, configLoader, messageTableModel, rules));
+    }
+
+    private boolean isDarkBg(JTabbedPane HaETabbedPane) {
+        Color bg = HaETabbedPane.getBackground();
+        int r = bg.getRed();
+        int g = bg.getGreen();
+        int b = bg.getBlue();
+        int avg = (r + g + b) / 3;
+
+        return avg < 128;
     }
 
     private ImageIcon getImageIcon(boolean isDark) {
@@ -81,7 +81,6 @@ public class Main extends JPanel {
         ImageIcon originalIcon = new ImageIcon(imageURL);
         Image originalImage = originalIcon.getImage();
         Image scaledImage = originalImage.getScaledInstance(30, 20, Image.SCALE_FAST);
-        ImageIcon scaledIcon = new ImageIcon(scaledImage);
-        return scaledIcon;
+        return new ImageIcon(scaledImage);
     }
 }

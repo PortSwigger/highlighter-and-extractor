@@ -9,9 +9,11 @@ import burp.api.montoya.ui.Selection;
 import burp.api.montoya.ui.editor.extension.EditorCreationContext;
 import burp.api.montoya.ui.editor.extension.ExtensionProvidedHttpRequestEditor;
 import burp.api.montoya.ui.editor.extension.HttpRequestEditorProvider;
-import hae.component.board.Datatable;
+import hae.Config;
+import hae.component.board.table.Datatable;
 import hae.instances.http.utils.MessageProcessor;
 import hae.utils.ConfigLoader;
+import hae.utils.http.HttpUtils;
 import hae.utils.string.StringProcessor;
 
 import javax.swing.*;
@@ -29,6 +31,28 @@ public class RequestEditor implements HttpRequestEditorProvider {
         this.configLoader = configLoader;
     }
 
+    public static boolean isListHasData(List<Map<String, String>> dataList) {
+        if (dataList != null && !dataList.isEmpty()) {
+            Map<String, String> dataMap = dataList.get(0);
+            return dataMap != null && !dataMap.isEmpty();
+        }
+        return false;
+    }
+
+    public static void generateTabbedPaneFromResultMap(MontoyaApi api, ConfigLoader configLoader, JTabbedPane tabbedPane, List<Map<String, String>> result) {
+        tabbedPane.removeAll();
+        if (result != null && !result.isEmpty()) {
+            Map<String, String> dataMap = result.get(0);
+            if (dataMap != null && !dataMap.isEmpty()) {
+                dataMap.keySet().forEach(i -> {
+                    String[] extractData = dataMap.get(i).split(Config.boundary);
+                    Datatable dataPanel = new Datatable(api, configLoader, i, Arrays.asList(extractData));
+                    tabbedPane.addTab(i, dataPanel);
+                });
+            }
+        }
+    }
+
     @Override
     public ExtensionProvidedHttpRequestEditor provideHttpRequestEditor(EditorCreationContext editorCreationContext) {
         return new Editor(api, configLoader, editorCreationContext);
@@ -37,18 +61,19 @@ public class RequestEditor implements HttpRequestEditorProvider {
     private static class Editor implements ExtensionProvidedHttpRequestEditor {
         private final MontoyaApi api;
         private final ConfigLoader configLoader;
+        private final HttpUtils httpUtils;
         private final EditorCreationContext creationContext;
         private final MessageProcessor messageProcessor;
+        private final JTabbedPane jTabbedPane = new JTabbedPane();
         private HttpRequestResponse requestResponse;
         private List<Map<String, String>> dataList;
-
-        private final JTabbedPane jTabbedPane = new JTabbedPane();
 
         public Editor(MontoyaApi api, ConfigLoader configLoader, EditorCreationContext creationContext) {
             this.api = api;
             this.configLoader = configLoader;
+            this.httpUtils = new HttpUtils(api, configLoader);
             this.creationContext = creationContext;
-            this.messageProcessor = new MessageProcessor(api);
+            this.messageProcessor = new MessageProcessor(api, configLoader);
         }
 
         @Override
@@ -59,7 +84,7 @@ public class RequestEditor implements HttpRequestEditorProvider {
         @Override
         public void setRequestResponse(HttpRequestResponse requestResponse) {
             this.requestResponse = requestResponse;
-            generateTabbedPaneFromResultMap(api, jTabbedPane, this.dataList);
+            generateTabbedPaneFromResultMap(api, configLoader, jTabbedPane, this.dataList);
         }
 
         @Override
@@ -69,13 +94,10 @@ public class RequestEditor implements HttpRequestEditorProvider {
                 try {
                     String host = StringProcessor.getHostByUrl(request.url());
                     if (!host.isEmpty()) {
-                        String[] hostList = configLoader.getBlockHost().split("\\|");
-                        boolean isBlockHost = isBlockHost(hostList, host);
+                        String toolType = creationContext.toolSource().toolType().toolName();
+                        boolean matches = httpUtils.verifyHttpRequestResponse(requestResponse, toolType);
 
-                        List<String> suffixList = Arrays.asList(configLoader.getExcludeSuffix().split("\\|"));
-                        boolean matches = suffixList.contains(request.fileExtension().toLowerCase()) || isBlockHost;
-
-                        if (!matches && !request.bodyToString().equals("Loading...")) {
+                        if (!matches) {
                             this.dataList = messageProcessor.processRequest("", request, false);
                             return isListHasData(this.dataList);
                         }
@@ -115,41 +137,6 @@ public class RequestEditor implements HttpRequestEditorProvider {
         @Override
         public boolean isModified() {
             return false;
-        }
-    }
-
-    public static boolean isBlockHost(String[] hostList, String host) {
-        boolean isBlockHost = false;
-        for (String hostName : hostList) {
-            String cleanedHost = StringProcessor.replaceFirstOccurrence(hostName, "*.", "");
-            if (hostName.contains("*.") && StringProcessor.matchFromEnd(host, cleanedHost)) {
-                isBlockHost = true;
-            } else if (host.equals(hostName) || hostName.equals("*")) {
-                isBlockHost = true;
-            }
-        }
-        return isBlockHost;
-    }
-
-    public static boolean isListHasData(List<Map<String, String>> dataList) {
-        if (dataList != null && !dataList.isEmpty()) {
-            Map<String, String> dataMap = dataList.get(0);
-            return dataMap != null && !dataMap.isEmpty();
-        }
-        return false;
-    }
-
-    public static void generateTabbedPaneFromResultMap(MontoyaApi api, JTabbedPane tabbedPane, List<Map<String, String>> result) {
-        tabbedPane.removeAll();
-        if (result != null && !result.isEmpty()) {
-            Map<String, String> dataMap = result.get(0);
-            if (dataMap != null && !dataMap.isEmpty()) {
-                dataMap.keySet().forEach(i -> {
-                    String[] extractData = dataMap.get(i).split("\n");
-                    Datatable dataPanel = new Datatable(api, i, Arrays.asList(extractData));
-                    tabbedPane.addTab(i, dataPanel);
-                });
-            }
         }
     }
 }

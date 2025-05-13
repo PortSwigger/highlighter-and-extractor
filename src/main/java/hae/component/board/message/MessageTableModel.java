@@ -1,18 +1,17 @@
 package hae.component.board.message;
 
 import burp.api.montoya.MontoyaApi;
-import burp.api.montoya.core.ByteArray;
 import burp.api.montoya.http.message.HttpHeader;
 import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
+import burp.api.montoya.persistence.PersistedObject;
 import burp.api.montoya.ui.UserInterface;
 import burp.api.montoya.ui.editor.HttpRequestEditor;
 import burp.api.montoya.ui.editor.HttpResponseEditor;
 import hae.Config;
-import hae.cache.CachePool;
-import hae.utils.project.FileProcessor;
-import hae.utils.string.HashCalculator;
+import hae.utils.ConfigLoader;
+import hae.utils.DataManager;
 import hae.utils.string.StringProcessor;
 
 import javax.swing.*;
@@ -23,6 +22,8 @@ import javax.swing.table.TableRowSorter;
 import java.nio.charset.StandardCharsets;
 import java.text.MessageFormat;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
@@ -30,15 +31,17 @@ import static burp.api.montoya.ui.editor.EditorOptions.READ_ONLY;
 
 public class MessageTableModel extends AbstractTableModel {
     private final MontoyaApi api;
+    private final ConfigLoader configLoader;
     private final MessageTable messageTable;
     private final JSplitPane splitPane;
     private final LinkedList<MessageEntry> log = new LinkedList<>();
     private final LinkedList<MessageEntry> filteredLog;
     private SwingWorker<Void, Void> currentWorker;
 
-    public MessageTableModel(MontoyaApi api) {
+    public MessageTableModel(MontoyaApi api, ConfigLoader configLoader) {
         this.filteredLog = new LinkedList<>();
         this.api = api;
+        this.configLoader = configLoader;
 
         JTabbedPane messageTab = new JTabbedPane();
         UserInterface userInterface = api.userInterface();
@@ -53,14 +56,25 @@ public class MessageTableModel extends AbstractTableModel {
         messageTable.setAutoCreateRowSorter(true);
 
         // Length字段根据大小进行排序
+        TableRowSorter<DefaultTableModel> sorter = getDefaultTableModelTableRowSorter();
+        messageTable.setRowSorter(sorter);
+        messageTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
+
+        splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+        // 请求/响应文本框
+        JScrollPane scrollPane = new JScrollPane(messageTable);
+        scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_ALWAYS);
+        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
+        splitPane.setLeftComponent(scrollPane);
+        splitPane.setRightComponent(messageTab);
+    }
+
+    private TableRowSorter<DefaultTableModel> getDefaultTableModelTableRowSorter() {
         TableRowSorter<DefaultTableModel> sorter = (TableRowSorter<DefaultTableModel>) messageTable.getRowSorter();
-        sorter.setComparator(4, new Comparator<String>() {
-            @Override
-            public int compare(String s1, String s2) {
-                Integer age1 = Integer.parseInt(s1);
-                Integer age2 = Integer.parseInt(s2);
-                return age1.compareTo(age2);
-            }
+        sorter.setComparator(4, (Comparator<String>) (s1, s2) -> {
+            Integer age1 = Integer.parseInt(s1);
+            Integer age2 = Integer.parseInt(s2);
+            return age1.compareTo(age2);
         });
 
         // Color字段根据颜色顺序进行排序
@@ -81,48 +95,31 @@ public class MessageTableModel extends AbstractTableModel {
                 return -1;
             }
         });
-        messageTable.setRowSorter(sorter);
-        messageTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-
-        splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
-        // 请求/相应文本框
-        JScrollPane scrollPane = new JScrollPane(messageTable);
-        scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_ALWAYS);
-        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
-        splitPane.setLeftComponent(scrollPane);
-        splitPane.setRightComponent(messageTab);
+        return sorter;
     }
 
-    public void add(HttpRequestResponse messageInfo, String url, String method, String status, String length, String comment, String color, String hash, String path) {
+    public synchronized void add(HttpRequestResponse messageInfo, String url, String method, String status, String length, String comment, String color, boolean flag) {
         synchronized (log) {
-            boolean isDuplicate = false;
-            MessageEntry logEntry = new MessageEntry(messageInfo, method, url, comment, length, color, status, hash, path);
-
-            byte[] reqByteA = new byte[0];
-            byte[] resByteA = new byte[0];
-
-            if (messageInfo != null) {
-                HttpRequest httpRequest = messageInfo.request();
-                HttpResponse httpResponse = messageInfo.response();
-
-                reqByteA = httpRequest.toByteArray().getBytes();
-                resByteA = httpResponse.toByteArray().getBytes();
+            if (messageInfo == null) {
+                return;
             }
 
-            // 比较Hash，如若存在重复的请求或响应，则不放入消息内容里
+            boolean isDuplicate = false;
             try {
-                if (!log.isEmpty()) {
+                if (!log.isEmpty() && flag) {
+                    String host = StringProcessor.getHostByUrl(url);
+
                     for (MessageEntry entry : log) {
-                        HttpRequestResponse reqResMessage = entry.getRequestResponse();
-                        byte[] reqByteB = reqResMessage.request().toByteArray().getBytes();
-                        byte[] resByteB = reqResMessage.response().toByteArray().getBytes();
-                        try {
-                            // 通过URL、请求和响应报文、匹配数据内容，多维度进行对比
-                            if ((entry.getUrl().equals(url) || (Arrays.equals(reqByteB, reqByteA) || Arrays.equals(resByteB, resByteA))) && (areMapsEqual(getCacheData(reqByteB), getCacheData(reqByteA)) && areMapsEqual(getCacheData(resByteB), getCacheData(resByteA)))) {
+                        if (host.equals(StringProcessor.getHostByUrl(entry.getUrl()))) {
+                            if (isRequestDuplicate(
+                                    messageInfo, entry.getRequestResponse(),
+                                    url, entry.getUrl(),
+                                    comment, entry.getComment(),
+                                    color, entry.getColor()
+                            )) {
                                 isDuplicate = true;
                                 break;
                             }
-                        } catch (Exception ignored) {
                         }
                     }
                 }
@@ -130,10 +127,84 @@ public class MessageTableModel extends AbstractTableModel {
             }
 
             if (!isDuplicate) {
-                log.add(logEntry);
+                if (flag) {
+                    persistData(messageInfo, comment, color);
+                }
+                log.add(new MessageEntry(messageInfo, method, url, comment, length, color, status));
             }
         }
+    }
 
+    private boolean isRequestDuplicate(
+            HttpRequestResponse newReq, HttpRequestResponse existingReq,
+            String newUrl, String existingUrl,
+            String newComment, String existingComment,
+            String newColor, String existingColor) {
+        try {
+            // 基础属性匹配
+            String normalizedNewUrl = normalizeUrl(newUrl);
+            String normalizedExistingUrl = normalizeUrl(existingUrl);
+            boolean basicMatch = normalizedNewUrl.equals(normalizedExistingUrl);
+
+            // 请求响应内容匹配
+            byte[] newReqBytes = newReq.request().toByteArray().getBytes();
+            byte[] newResBytes = newReq.response().toByteArray().getBytes();
+            byte[] existingReqBytes = existingReq.request().toByteArray().getBytes();
+            byte[] existingResBytes = existingReq.response().toByteArray().getBytes();
+            boolean contentMatch = Arrays.equals(newReqBytes, existingReqBytes) &&
+                    Arrays.equals(newResBytes, existingResBytes);
+
+            // 注释和颜色匹配
+            boolean metadataMatch = areCommentsEqual(newComment, existingComment) &&
+                    newColor.equals(existingColor);
+
+            return (basicMatch || contentMatch) && metadataMatch;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private String normalizeUrl(String url) {
+        if (url == null) {
+            return "";
+        }
+
+        String normalized = url.trim().toLowerCase();
+        while (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+
+        return normalized.replaceAll("//", "/");
+    }
+
+    private boolean areCommentsEqual(String comment1, String comment2) {
+        if (comment1 == null || comment2 == null) {
+            return false;
+        }
+
+        try {
+            // 将注释按规则拆分并排序
+            Set<String> rules1 = new TreeSet<>(Arrays.asList(comment1.split(", ")));
+            Set<String> rules2 = new TreeSet<>(Arrays.asList(comment2.split(", ")));
+
+            return rules1.equals(rules2);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void persistData(HttpRequestResponse messageInfo, String comment, String color) {
+        try {
+            DataManager dataManager = new DataManager(api);
+            PersistedObject persistedObject = PersistedObject.persistedObject();
+            persistedObject.setHttpRequestResponse("messageInfo", messageInfo);
+            persistedObject.setString("comment", comment);
+            persistedObject.setString("color", color);
+            String uuidIndex = StringProcessor.getRandomUUID();
+            dataManager.putData("message", uuidIndex, persistedObject);
+        } catch (Exception e) {
+            api.logging().logToError("Data persistence error: " + e.getMessage());
+        }
     }
 
     public void deleteByHost(String filterText) {
@@ -144,7 +215,7 @@ public class MessageTableModel extends AbstractTableModel {
             currentWorker.cancel(true);
         }
 
-        currentWorker = new SwingWorker<Void, Void>() {
+        currentWorker = new SwingWorker<>() {
             @Override
             protected Void doInBackground() {
                 for (int i = 0; i < log.size(); i++) {
@@ -171,46 +242,40 @@ public class MessageTableModel extends AbstractTableModel {
 
     public void applyHostFilter(String filterText) {
         filteredLog.clear();
-
-        log.forEach(entry -> {
-            MessageEntry finalEntry = getEntryByFile(entry);
-            String host = StringProcessor.getHostByUrl(finalEntry.getUrl());
-            if (!host.isEmpty()) {
-                if (StringProcessor.matchesHostPattern(host, filterText) || filterText.contains("*")) {
-                    filteredLog.add(finalEntry);
-                }
-            }
-        });
-
         fireTableDataChanged();
-    }
 
-    private MessageEntry getEntryByFile(MessageEntry entry) {
-        HttpRequestResponse requestResponse = entry.getRequestResponse();
-        if (requestResponse == null) {
-            String url = entry.getUrl();
-            String method = entry.getMethod();
-            String status = entry.getStatus();
-            String comment = entry.getComment();
-            String color = entry.getColor();
-            String path = entry.getPath();
-            String hash = entry.getHash();
-            int length = Integer.parseInt(entry.getLength());
+        int batchSize = 500;
 
-            byte[] contents = FileProcessor.readFileContent(path, hash);
+        // 分批处理数据
+        List<MessageEntry> batch = new ArrayList<>(batchSize);
+        int count = 0;
 
-            if (contents.length > length) {
-                byte[] response = Arrays.copyOf(contents, length);
-                byte[] request = Arrays.copyOfRange(contents, length, contents.length);
-                requestResponse = StringProcessor.createHttpRequestResponse(url, request, response);
+        for (MessageEntry entry : log) {
+            String host = StringProcessor.getHostByUrl(entry.getUrl());
+            if (!host.isEmpty() && (StringProcessor.matchesHostPattern(host, filterText) || filterText.contains("*"))) {
+                batch.add(entry);
+                count++;
 
-                int index = log.indexOf(entry);
-                entry = new MessageEntry(requestResponse, method, url, comment, String.valueOf(length), color, status, "", "");
-                log.set(index, entry);
+                // 当批次达到指定大小时，更新UI
+                if (count % batchSize == 0) {
+                    final List<MessageEntry> currentBatch = new ArrayList<>(batch);
+                    SwingUtilities.invokeLater(() -> {
+                        filteredLog.addAll(currentBatch);
+                        fireTableDataChanged();
+                    });
+                    batch.clear();
+                }
             }
         }
 
-        return entry;
+        // 处理最后一批
+        if (!batch.isEmpty()) {
+            final List<MessageEntry> finalBatch = new ArrayList<>(batch);
+            SwingUtilities.invokeLater(() -> {
+                filteredLog.addAll(finalBatch);
+                fireTableDataChanged();
+            });
+        }
     }
 
     public void applyMessageFilter(String tableName, String filterText) {
@@ -227,13 +292,13 @@ public class MessageTableModel extends AbstractTableModel {
             String requestBody = new String(httpRequest.body().getBytes(), StandardCharsets.UTF_8);
             String requestHeaders = httpRequest.headers().stream()
                     .map(HttpHeader::toString)
-                    .collect(Collectors.joining("\n"));
+                    .collect(Collectors.joining("\r\n"));
 
             String responseString = new String(httpResponse.toByteArray().getBytes(), StandardCharsets.UTF_8);
             String responseBody = new String(httpResponse.body().getBytes(), StandardCharsets.UTF_8);
             String responseHeaders = httpResponse.headers().stream()
                     .map(HttpHeader::toString)
-                    .collect(Collectors.joining("\n"));
+                    .collect(Collectors.joining("\r\n"));
 
             Config.globalRules.keySet().forEach(i -> {
                 for (Object[] objects : Config.globalRules.get(i)) {
@@ -323,66 +388,12 @@ public class MessageTableModel extends AbstractTableModel {
         return isMatch;
     }
 
-    private Map<String, Map<String, Object>> getCacheData(byte[] content) {
-        String hashIndex = HashCalculator.calculateHash(content);
-        return CachePool.get(hashIndex);
-    }
-
-    private boolean areMapsEqual(Map<String, Map<String, Object>> map1, Map<String, Map<String, Object>> map2) {
-        if (map1 == null || map2 == null) {
-            return false;
-        }
-        if (map1.size() != map2.size()) {
-            return false;
-        }
-
-        for (String key : map1.keySet()) {
-            if (!map2.containsKey(key)) {
-                return false;
-            }
-            if (areInnerMapsEqual(map1.get(key), map2.get(key))) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private boolean areInnerMapsEqual(Map<String, Object> innerMap1, Map<String, Object> innerMap2) {
-        if (innerMap1.size() != innerMap2.size()) {
-            return true;
-        }
-
-        for (String key : innerMap1.keySet()) {
-            if (!innerMap2.containsKey(key)) {
-                return true;
-            }
-            Object value1 = innerMap1.get(key);
-            Object value2 = innerMap2.get(key);
-
-            // 如果值是Map，则递归对比
-            if (value1 instanceof Map && value2 instanceof Map) {
-                if (areInnerMapsEqual((Map<String, Object>) value1, (Map<String, Object>) value2)) {
-                    return true;
-                }
-            } else if (!value1.equals(value2)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     public JSplitPane getSplitPane() {
         return splitPane;
     }
 
     public MessageTable getMessageTable() {
         return messageTable;
-    }
-
-    public LinkedList<MessageEntry> getLogs() {
-        return log;
     }
 
     @Override
@@ -434,51 +445,40 @@ public class MessageTableModel extends AbstractTableModel {
     }
 
     public class MessageTable extends JTable {
-        private MessageEntry messageEntry;
-        private SwingWorker<Object, Void> currentWorker;
-        private int lastSelectedIndex = -1;
+        private final ExecutorService executorService;
         private final HttpRequestEditor requestEditor;
         private final HttpResponseEditor responseEditor;
+        private int lastSelectedIndex = -1;
 
         public MessageTable(TableModel messageTableModel, HttpRequestEditor requestEditor, HttpResponseEditor responseEditor) {
             super(messageTableModel);
             this.requestEditor = requestEditor;
             this.responseEditor = responseEditor;
+            this.executorService = Executors.newSingleThreadExecutor();
         }
 
         @Override
         public void changeSelection(int row, int col, boolean toggle, boolean extend) {
             super.changeSelection(row, col, toggle, extend);
-
-            requestEditor.setRequest(HttpRequest.httpRequest("Loading..."));
-            responseEditor.setResponse(HttpResponse.httpResponse("Loading..."));
-
-            if (currentWorker != null && !currentWorker.isDone()) {
-                currentWorker.cancel(true);
+            int selectedIndex = convertRowIndexToModel(row);
+            if (lastSelectedIndex != selectedIndex) {
+                lastSelectedIndex = selectedIndex;
+                executorService.execute(this::getSelectedMessage);
             }
+        }
 
-            currentWorker = new SwingWorker<>() {
-                @Override
-                protected Void doInBackground() {
-                    int selectedIndex = convertRowIndexToModel(row);
-                    if (lastSelectedIndex != selectedIndex) {
-                        lastSelectedIndex = selectedIndex;
-                        messageEntry = filteredLog.get(selectedIndex);
+        private void getSelectedMessage() {
+            MessageEntry messageEntry = filteredLog.get(lastSelectedIndex);
 
-                        HttpRequestResponse httpRequestResponse = messageEntry.getRequestResponse();
+            HttpRequestResponse httpRequestResponse = messageEntry.getRequestResponse();
 
-                        ByteArray requestByte = httpRequestResponse.request().toByteArray();
-                        ByteArray responseByte = httpRequestResponse.response().toByteArray();
-
-                        requestEditor.setRequest(HttpRequest.httpRequest(messageEntry.getRequestResponse().httpService(), requestByte));
-                        responseEditor.setResponse(HttpResponse.httpResponse(responseByte));
-
-                    }
-
-                    return null;
-                }
-            };
-            currentWorker.execute();
+            requestEditor.setRequest(HttpRequest.httpRequest(messageEntry.getRequestResponse().httpService(), httpRequestResponse.request().toByteArray()));
+            int responseSizeWithMb = httpRequestResponse.response().toString().length() / 1024 / 1024;
+            if ((responseSizeWithMb < Integer.parseInt(configLoader.getLimitSize())) || configLoader.getLimitSize().equals("0")) {
+                responseEditor.setResponse(httpRequestResponse.response());
+            } else {
+                responseEditor.setResponse(HttpResponse.httpResponse("Exceeds length limit."));
+            }
         }
     }
 }

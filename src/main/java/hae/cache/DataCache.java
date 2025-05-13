@@ -6,9 +6,9 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-public class CachePool {
+public class DataCache {
     private static final int MAX_SIZE = 100000;
-    private static final int EXPIRE_DURATION = 5;
+    private static final int EXPIRE_DURATION = 4;
 
     private static final Cache<String, Map<String, Map<String, Object>>> cache =
             Caffeine.newBuilder()
@@ -22,10 +22,6 @@ public class CachePool {
 
     public static Map<String, Map<String, Object>> get(String key) {
         return cache.getIfPresent(key);
-    }
-
-    public static void remove(String key) {
-        cache.invalidate(key);
     }
 
     public static void clear() {

@@ -10,14 +10,14 @@ import burp.api.montoya.ui.Selection;
 import burp.api.montoya.ui.editor.extension.EditorCreationContext;
 import burp.api.montoya.ui.editor.extension.ExtensionProvidedHttpResponseEditor;
 import burp.api.montoya.ui.editor.extension.HttpResponseEditorProvider;
-import hae.component.board.Datatable;
+import hae.component.board.table.Datatable;
 import hae.instances.http.utils.MessageProcessor;
 import hae.utils.ConfigLoader;
+import hae.utils.http.HttpUtils;
 import hae.utils.string.StringProcessor;
 
 import javax.swing.*;
 import java.awt.*;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -38,18 +38,19 @@ public class ResponseEditor implements HttpResponseEditorProvider {
     private static class Editor implements ExtensionProvidedHttpResponseEditor {
         private final MontoyaApi api;
         private final ConfigLoader configLoader;
+        private final HttpUtils httpUtils;
         private final EditorCreationContext creationContext;
         private final MessageProcessor messageProcessor;
+        private final JTabbedPane jTabbedPane = new JTabbedPane();
         private HttpRequestResponse requestResponse;
         private List<Map<String, String>> dataList;
-
-        private final JTabbedPane jTabbedPane = new JTabbedPane();
 
         public Editor(MontoyaApi api, ConfigLoader configLoader, EditorCreationContext creationContext) {
             this.api = api;
             this.configLoader = configLoader;
+            this.httpUtils = new HttpUtils(api, configLoader);
             this.creationContext = creationContext;
-            this.messageProcessor = new MessageProcessor(api);
+            this.messageProcessor = new MessageProcessor(api, configLoader);
         }
 
         @Override
@@ -60,7 +61,7 @@ public class ResponseEditor implements HttpResponseEditorProvider {
         @Override
         public void setRequestResponse(HttpRequestResponse requestResponse) {
             this.requestResponse = requestResponse;
-            RequestEditor.generateTabbedPaneFromResultMap(api, jTabbedPane, this.dataList);
+            RequestEditor.generateTabbedPaneFromResultMap(api, configLoader, jTabbedPane, this.dataList);
         }
 
         @Override
@@ -75,17 +76,14 @@ public class ResponseEditor implements HttpResponseEditorProvider {
                     try {
                         String host = StringProcessor.getHostByUrl(request.url());
                         if (!host.isEmpty()) {
-                            String[] hostList = configLoader.getBlockHost().split("\\|");
-                            boolean isBlockHost = RequestEditor.isBlockHost(hostList, host);
-
-                            List<String> suffixList = Arrays.asList(configLoader.getExcludeSuffix().split("\\|"));
-                            matches = suffixList.contains(request.fileExtension().toLowerCase()) || isBlockHost;
+                            String toolType = creationContext.toolSource().toolType().toolName();
+                            matches = httpUtils.verifyHttpRequestResponse(requestResponse, toolType);
                         }
                     } catch (Exception ignored) {
                     }
                 }
 
-                if (!matches && !response.bodyToString().equals("Loading...")) {
+                if (!matches) {
                     this.dataList = messageProcessor.processResponse("", response, false);
                     return RequestEditor.isListHasData(this.dataList);
                 }

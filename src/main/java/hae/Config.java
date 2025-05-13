@@ -10,6 +10,14 @@ public class Config {
 
     public static String host = "gh0st.cn";
 
+    public static String status = "404";
+
+    public static String header = "Last-Modified|Date|Connection|ETag";
+
+    public static String size = "0";
+
+    public static String boundary = "\n\t\n";
+
     public static String[] scope = new String[]{
             "any",
             "any header",
@@ -23,6 +31,10 @@ public class Config {
             "request header",
             "request body"
     };
+
+    public static String scopeOptions = "Suite|Target|Proxy|Scanner|Intruder|Repeater|Logger|Sequencer|Decoder|Comparer|Extensions|Organizer|Recorded login replayer";
+
+    public static String modeStatus = "true";
 
     public static String[] ruleFields = {
             "Loaded", "Name", "F-Regex", "S-Regex", "Format", "Color", "Scope", "Engine", "Sensitive"
@@ -51,9 +63,9 @@ public class Config {
             "gray"
     };
 
+    public static Boolean proVersionStatus = true;
+
     public static Map<String, Object[][]> globalRules = new HashMap<>();
 
     public static ConcurrentHashMap<String, Map<String, List<String>>> globalDataMap = new ConcurrentHashMap<>();
-
-    public static ConcurrentHashMap<String, Map<String, Object>> globalHostHashMap = new ConcurrentHashMap<>();
 }
