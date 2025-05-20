@@ -1,6 +1,24 @@
-<p>Highlighter and Extractor is an auxiliary framework project in the field of cybersecurity (data security), aimed at achieving highlighting and information extraction of HTTP messages (including WebSocket). This project customizes regular expression matching for response messages or request messages and marks and extracts messages that successfully.</p>
+<p>HaE is a framework-style project in the field of cybersecurity (data security) that adopts a Lego brick-style modular design philosophy. It focuses on fine-grained tagging and extraction of HTTP messages, including WebSocket. HaE uses multi-engine customized regular expressions to accurately match and process HTTP requests and responses, effectively tagging and extracting information from successfully matched content. This enhances the efficiency of vulnerability and data analysis in cybersecurity.</p>
 
-<p>Note: The use of HaE requires a basic regular expression foundation for testers. Since the Java regular expression library is not as elegant or convenient as Python, when using regular expressions, HaE requires users to use () to extract what they need The expression content contains; for example, if you want to match a response message of a Shiro application, the normal matching rule is rememberMe=delete, if you want to extract this content, you need to become (rememberMe=delete).</p> 
+<p>As modern web applications increasingly adopt front-end and back-end separation development models, the volume of captured HTTP request traffic during vulnerability discovery has risen significantly. HaE addresses this issue by reducing testing time and helping users focus on valuable and meaningful messages, thus improving the efficiency of vulnerability discovery.</p>
 
-<p>Instructions:</p>
-<p>The configuration file is initialized when HaE is loaded for the first time. The default configuration file has a built-in regular expression: Email. The initialized configuration file will be placed in the same directory as the BurpSuite Jar package.</p>
+<h2>Features</h2>
+<ul>
+  <li><strong>Fine-grained Tagging & Extraction</strong>: Processes HTTP requests and responses, including WebSocket, with precise tagging and extraction of relevant data.</li>
+  <li><strong>Optimized for Efficiency</strong>: Reduces testing time by focusing on valuable, meaningful messages during vulnerability discovery.</li>
+  <li><strong>Customizable Rules</strong>: Users can define their own rules using regular expressions to match specific patterns in HTTP traffic.</li>
+  <li><strong>Color Highlighting</strong>: Matches are highlighted with customizable colors, with an automatic upgrade algorithm to avoid redundant color markings.</li>
+  <li><strong>Integrated with BurpSuite</strong>: HaE stores data alongside BurpSuite project data for seamless project management.</li>
+  <li><strong>Query Management</strong>: Centralized data panel for one-click queries and extraction of information, improving testing and analysis efficiency.</li>
+</ul>
+
+<h2>Usage</h2>
+<p>Upon first use, HaE will load the offline rule database from the Jar package. To update rules, click <code class="InlineCode">Reinit</code> to reinitialize the database. Access the rule database on GitHub for the built-in rule set: <a href="https://github.com/gh0stkey/HaE/blob/master/src/main/resources/rules/Rules.yml">https://github.com/gh0stkey/HaE/blob/master/src/main/resources/rules/Rules.yml</a>.</p>
+
+<p>The configuration file (<code class="InlineCode">Config.yml</code>) and rule file (<code class="InlineCode">Rules.yml</code>) are stored in a fixed directory:</p>
+<ol>
+  <li>For Linux/Mac: <code class="InlineCode">~/.config/HaE/</code></li>
+  <li>For Windows: <code class="InlineCode">%USERPROFILE%/.config/HaE/</code></li>
+</ol>
+
+<p>Custom HaE rules must enclose the expressions to be extracted within parentheses <code class="InlineCode">()</code>. For example, if you want to match a response message from a Shiro application, the normal matching rule would be <code class="InlineCode">rememberMe=delete</code>, but in HaE's rule format, it needs to be written as <code class="InlineCode">(rememberMe=delete)</code>.</p>
