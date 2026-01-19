@@ -2,12 +2,12 @@ Uuid: a7609ae2055342e9b6ffcf7cbcacf019
 ExtensionType: 1
 Name: Highlighter And Extractor
 RepoName: highlighter-and-extractor
-ScreenVersion: 4.2.1
-SerialVersion: 23
+ScreenVersion: 4.3.3
+SerialVersion: 24
 MinPlatformVersion: 15
 ProOnly: False
 Author: gh0stkey
 ShortDescription: Highlight HTTP requests and extract information from HTTP response messages.
-EntryPoint: build/libs/HaE.jar
-BuildCommand: cd src/HaENet BuildCommand: ./gradlew jarBuildCommand: ./gradlew jar ./gradlew build
+EntryPoint: HaE.jar
+BuildCommand: cd src/HaENet BuildCommand: cd src/HaENet BuildCommand: ./gradlew jarBuildCommand: ./gradlew jar ./gradlew buildBuildCommand: cd src/HaENet BuildCommand: ./gradlew jarBuildCommand: ./gradlew jar ./gradlew build ./gradlew build
 SupportedProducts: Pro, Community
