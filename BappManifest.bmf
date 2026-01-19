@@ -9,5 +9,5 @@ ProOnly: False
 Author: gh0stkey
 ShortDescription: Highlight HTTP requests and extract information from HTTP response messages.
 EntryPoint: build/libs/HaE.jar
-BuildCommand: ./gradlew jar
+BuildCommand: cd src/HaENet BuildCommand: ./gradlew jarBuildCommand: ./gradlew jar ./gradlew build
 SupportedProducts: Pro, Community
