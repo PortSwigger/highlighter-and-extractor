@@ -10,7 +10,11 @@ import burp.api.montoya.ui.editor.extension.ExtensionProvidedWebSocketMessageEdi
 import burp.api.montoya.ui.editor.extension.WebSocketMessageEditorProvider;
 import hae.component.board.table.Datatable;
 import hae.instances.http.utils.MessageProcessor;
+import hae.repository.DataRepository;
+import hae.repository.RuleRepository;
+import hae.service.ValidatorService;
 import hae.utils.ConfigLoader;
+import hae.utils.string.StringProcessor;
 
 import javax.swing.*;
 import java.awt.*;
@@ -20,15 +24,23 @@ import java.util.Map;
 public class WebSocketEditor implements WebSocketMessageEditorProvider {
     private final MontoyaApi api;
     private final ConfigLoader configLoader;
+    private final DataRepository dataRepository;
+    private final RuleRepository ruleRepository;
+    private final ValidatorService validatorService;
 
-    public WebSocketEditor(MontoyaApi api, ConfigLoader configLoader) {
+    public WebSocketEditor(MontoyaApi api, ConfigLoader configLoader,
+                           DataRepository dataRepository, RuleRepository ruleRepository,
+                           ValidatorService validatorService) {
         this.api = api;
         this.configLoader = configLoader;
+        this.dataRepository = dataRepository;
+        this.ruleRepository = ruleRepository;
+        this.validatorService = validatorService;
     }
 
     @Override
     public ExtensionProvidedWebSocketMessageEditor provideMessageEditor(EditorCreationContext editorCreationContext) {
-        return new Editor(api, configLoader, editorCreationContext);
+        return new Editor(api, configLoader, dataRepository, ruleRepository, validatorService, editorCreationContext);
     }
 
     private static class Editor implements ExtensionProvidedWebSocketMessageEditor {
@@ -36,15 +48,19 @@ public class WebSocketEditor implements WebSocketMessageEditorProvider {
         private final ConfigLoader configLoader;
         private final EditorCreationContext creationContext;
         private final MessageProcessor messageProcessor;
+        private final ValidatorService validatorService;
         private final JTabbedPane jTabbedPane = new JTabbedPane();
         private ByteArray message;
         private List<Map<String, String>> dataList;
 
-        public Editor(MontoyaApi api, ConfigLoader configLoader, EditorCreationContext creationContext) {
+        public Editor(MontoyaApi api, ConfigLoader configLoader,
+                      DataRepository dataRepository, RuleRepository ruleRepository,
+                      ValidatorService validatorService, EditorCreationContext creationContext) {
             this.api = api;
             this.configLoader = configLoader;
             this.creationContext = creationContext;
-            this.messageProcessor = new MessageProcessor(api, configLoader);
+            this.messageProcessor = new MessageProcessor(api, configLoader, dataRepository, ruleRepository);
+            this.validatorService = validatorService;
         }
 
         @Override
@@ -55,15 +71,17 @@ public class WebSocketEditor implements WebSocketMessageEditorProvider {
         @Override
         public void setMessage(WebSocketMessage webSocketMessage) {
             this.message = webSocketMessage.payload();
-            RequestEditor.generateTabbedPaneFromResultMap(api, configLoader, jTabbedPane, this.dataList);
+            EditorUtils.generateTabbedPaneFromResultMap(api, configLoader, jTabbedPane, this.dataList, validatorService);
         }
 
         @Override
         public boolean isEnabledFor(WebSocketMessage webSocketMessage) {
             String websocketMessage = webSocketMessage.payload().toString();
             if (!websocketMessage.isEmpty()) {
-                this.dataList = messageProcessor.processMessage("", websocketMessage, false);
-                return RequestEditor.isListHasData(this.dataList);
+                String url = webSocketMessage.upgradeRequest().url();
+                String host = StringProcessor.getHostByUrl(url);
+                this.dataList = messageProcessor.processMessage(host, url, websocketMessage, false, false, false);
+                return EditorUtils.isListHasData(this.dataList);
             }
             return false;
         }

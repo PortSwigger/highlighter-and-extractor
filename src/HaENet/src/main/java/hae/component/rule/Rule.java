@@ -1,9 +1,11 @@
 package hae.component.rule;
 
 import burp.api.montoya.MontoyaApi;
-import hae.Config;
+import hae.AppConstants;
+import hae.repository.RuleRepository;
 import hae.utils.ConfigLoader;
 import hae.utils.rule.RuleProcessor;
+import hae.utils.rule.model.RuleDefinition;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -14,32 +16,57 @@ import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.List;
 import java.util.Vector;
 
 import static javax.swing.JOptionPane.YES_OPTION;
 
 public class Rule extends JPanel {
+
     private final MontoyaApi api;
     private final ConfigLoader configLoader;
     private final RuleProcessor ruleProcessor;
     private final JTabbedPane tabbedPane;
+    private final Tester tester;
     private JCheckBox headerCheckBox;
 
-    public Rule(MontoyaApi api, ConfigLoader configLoader, Object[][] data, JTabbedPane tabbedPane) {
+    public Rule(
+            MontoyaApi api,
+            ConfigLoader configLoader,
+            List<RuleDefinition> rules,
+            JTabbedPane tabbedPane,
+            RuleRepository ruleRepository,
+            Tester tester
+    ) {
         this.api = api;
         this.configLoader = configLoader;
-        this.ruleProcessor = new RuleProcessor(api, configLoader);
+        this.ruleProcessor = new RuleProcessor(
+                api,
+                configLoader,
+                ruleRepository
+        );
         this.tabbedPane = tabbedPane;
+        this.tester = tester;
 
-        initComponents(data);
+        initComponents(rules);
     }
 
-    private void initComponents(Object[][] data) {
+    private void initComponents(List<RuleDefinition> rules) {
         setLayout(new GridBagLayout());
         ((GridBagLayout) getLayout()).columnWidths = new int[]{0, 0, 0};
         ((GridBagLayout) getLayout()).rowHeights = new int[]{0, 0, 0, 0, 0};
-        ((GridBagLayout) getLayout()).columnWeights = new double[]{0.0, 1.0, 1.0E-4};
-        ((GridBagLayout) getLayout()).rowWeights = new double[]{0.0, 0.0, 0.0, 1.0, 1.0E-4};
+        ((GridBagLayout) getLayout()).columnWeights = new double[]{
+                0.0,
+                1.0,
+                1.0E-4,
+        };
+        ((GridBagLayout) getLayout()).rowWeights = new double[]{
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                1.0E-4,
+        };
 
         JButton copyButton = new JButton("Copy");
         JButton addButton = new JButton("Add");
@@ -55,44 +82,108 @@ public class Rule extends JPanel {
         scrollPane.setViewportView(ruleTable);
 
         // 按钮监听事件
-        copyButton.addActionListener(e -> ruleCopyActionPerformed(e, ruleTable, tabbedPane));
-        addButton.addActionListener(e -> ruleAddActionPerformed(e, ruleTable, tabbedPane));
-        editButton.addActionListener(e -> ruleEditActionPerformed(e, ruleTable, tabbedPane));
-        removeButton.addActionListener(e -> ruleRemoveActionPerformed(e, ruleTable, tabbedPane));
+        copyButton.addActionListener(e ->
+                ruleCopyActionPerformed(e, ruleTable, tabbedPane)
+        );
+        addButton.addActionListener(e ->
+                ruleAddActionPerformed(e, ruleTable, tabbedPane)
+        );
+        editButton.addActionListener(e ->
+                ruleEditActionPerformed(e, ruleTable, tabbedPane)
+        );
+        removeButton.addActionListener(e ->
+                ruleRemoveActionPerformed(e, ruleTable, tabbedPane)
+        );
 
         // 表格
         DefaultTableModel model = new DefaultTableModel() {
             @Override
             public Class<?> getColumnClass(int column) {
-                return (column == 0) ? Boolean.class : String.class;
+                // 0: Loaded, 8: Sensitive
+                return (column == 0 || column == 8)
+                        ? Boolean.class
+                        : String.class;
             }
 
             @Override
             public boolean isCellEditable(int row, int column) {
-                return column == 0;
+                return true;
             }
         };
 
         ruleTable.setModel(model);
         ruleTable.setRowSorter(new TableRowSorter<>(model));
 
-        model.setDataVector(data, Config.ruleFields);
+        Object[][] data = rules
+                .stream()
+                .map(RuleDefinition::toObjectArray)
+                .toArray(Object[][]::new);
+        model.setDataVector(data, AppConstants.ruleFields);
         model.addTableModelListener(e -> {
-            if (e.getColumn() == 0 && ruleTable.getSelectedRow() != -1) {
-                int select = ruleTable.convertRowIndexToModel(ruleTable.getSelectedRow());
-                ruleProcessor.changeRule(model.getDataVector().get(select), select, tabbedPane.getTitleAt(tabbedPane.getSelectedIndex()));
+            int col = e.getColumn();
+            if (col >= 0 && ruleTable.getSelectedRow() != -1) {
+                int select = ruleTable.convertRowIndexToModel(
+                        ruleTable.getSelectedRow()
+                );
+                ruleProcessor.changeRule(
+                        rowToRuleDefinition(model.getDataVector().get(select)),
+                        select,
+                        tabbedPane.getTitleAt(tabbedPane.getSelectedIndex())
+                );
 
-                // 更新表头复选框状态并强制重新渲染
-                updateHeaderCheckBoxState(model);
-                ruleTable.getTableHeader().repaint();
+                if (col == 0) {
+                    // 更新表头复选框状态并强制重新渲染
+                    updateHeaderCheckBoxState(model);
+                    ruleTable.getTableHeader().repaint();
+                }
+
+                // 编辑后同步更新Tester
+                tester.setSelectedRuleFromTable(
+                        ruleTable,
+                        tabbedPane.getTitleAt(tabbedPane.getSelectedIndex())
+                );
             }
         });
+
+        // 添加表格选择监听器，当选中规则时更新Tester
+        ruleTable
+                .getSelectionModel()
+                .addListSelectionListener(e -> {
+                    if (
+                            !e.getValueIsAdjusting() && ruleTable.getSelectedRow() >= 0
+                    ) {
+                        tester.setSelectedRuleFromTable(
+                                ruleTable,
+                                tabbedPane.getTitleAt(tabbedPane.getSelectedIndex())
+                        );
+                    }
+                });
 
         // 设置表头复选框
         setupHeaderCheckBox(ruleTable);
 
         // 设置Loaded列的宽度（第一列）
         setupColumnWidths(ruleTable);
+
+        // 设置下拉框编辑器
+        ruleTable
+                .getColumnModel()
+                .getColumn(5)
+                .setCellEditor(
+                        new DefaultCellEditor(new JComboBox<>(AppConstants.color))
+                );
+        ruleTable
+                .getColumnModel()
+                .getColumn(6)
+                .setCellEditor(
+                        new DefaultCellEditor(new JComboBox<>(AppConstants.scope))
+                );
+        ruleTable
+                .getColumnModel()
+                .getColumn(7)
+                .setCellEditor(
+                        new DefaultCellEditor(new JComboBox<>(AppConstants.engine))
+                );
 
         GridBagConstraints constraints = new GridBagConstraints();
         constraints.weightx = 1.0;
@@ -101,7 +192,15 @@ public class Rule extends JPanel {
         JPanel buttonPanel = new JPanel();
         GridBagLayout layout = new GridBagLayout();
         layout.rowHeights = new int[]{0, 0, 0, 0, 0, 0, 0};
-        layout.rowWeights = new double[]{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Double.MIN_VALUE};
+        layout.rowWeights = new double[]{
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                Double.MIN_VALUE,
+        };
         buttonPanel.setLayout(layout);
 
         constraints.insets = new Insets(0, 0, 3, 0);
@@ -114,17 +213,40 @@ public class Rule extends JPanel {
         constraints.gridy = 3;
         buttonPanel.add(removeButton, constraints);
 
-        add(buttonPanel, new GridBagConstraints(0, 0, 1, 1, 0.0, 0.0,
-                GridBagConstraints.CENTER, GridBagConstraints.BOTH,
-                new Insets(15, 5, 3, 2), 0, 0));
-        add(scrollPane, new GridBagConstraints(1, 0, 1, 4, 0.0, 0.0,
-                GridBagConstraints.CENTER, GridBagConstraints.BOTH,
-                new Insets(15, 5, 5, 5), 0, 0));
+        add(
+                buttonPanel,
+                new GridBagConstraints(
+                        0,
+                        0,
+                        1,
+                        1,
+                        0.0,
+                        0.0,
+                        GridBagConstraints.CENTER,
+                        GridBagConstraints.BOTH,
+                        new Insets(15, 5, 3, 2),
+                        0,
+                        0
+                )
+        );
+        add(
+                scrollPane,
+                new GridBagConstraints(
+                        1,
+                        0,
+                        1,
+                        4,
+                        0.0,
+                        0.0,
+                        GridBagConstraints.CENTER,
+                        GridBagConstraints.BOTH,
+                        new Insets(15, 5, 5, 5),
+                        0,
+                        0
+                )
+        );
     }
 
-    /**
-     * 设置列宽度
-     */
     private void setupColumnWidths(JTable ruleTable) {
         // 设置Loaded列（第一列）的宽度
         ruleTable.getColumnModel().getColumn(0).setPreferredWidth(50);
@@ -132,72 +254,39 @@ public class Rule extends JPanel {
         ruleTable.getColumnModel().getColumn(0).setMinWidth(50);
     }
 
-    /**
-     * 设置表头复选框
-     */
     private void setupHeaderCheckBox(JTable ruleTable) {
         // 创建表头复选框
         headerCheckBox = new JCheckBox();
         headerCheckBox.setHorizontalAlignment(SwingConstants.CENTER);
 
         // 设置表头渲染器
-        ruleTable.getTableHeader().setDefaultRenderer(new HeaderCheckBoxRenderer(ruleTable.getTableHeader().getDefaultRenderer()));
+        ruleTable
+                .getTableHeader()
+                .setDefaultRenderer(
+                        new HeaderCheckBoxRenderer(
+                                ruleTable.getTableHeader().getDefaultRenderer()
+                        )
+                );
 
         // 使用mousePressed代替mouseClicked，响应更快且不会被排序器干扰
-        ruleTable.getTableHeader().addMouseListener(new MouseAdapter() {
-            @Override
-            public void mousePressed(MouseEvent e) {
-                JTableHeader header = (JTableHeader) e.getSource();
-                int columnIndex = header.columnAtPoint(e.getPoint());
+        ruleTable
+                .getTableHeader()
+                .addMouseListener(
+                        new MouseAdapter() {
+                            @Override
+                            public void mousePressed(MouseEvent e) {
+                                JTableHeader header = (JTableHeader) e.getSource();
+                                int columnIndex = header.columnAtPoint(e.getPoint());
 
-                if (columnIndex == 0) { // 点击的是Loaded列表头
-                    toggleAllRules(header.getTable());
-                }
-            }
-        });
+                                if (columnIndex == 0) {
+                                    // 点击的是Loaded列表头
+                                    toggleAllRules(header.getTable());
+                                }
+                            }
+                        }
+                );
     }
 
-    /**
-     * 自定义表头渲染器，在Loaded列显示复选框
-     */
-    private class HeaderCheckBoxRenderer implements TableCellRenderer {
-        private final TableCellRenderer originalRenderer;
-
-        public HeaderCheckBoxRenderer(TableCellRenderer originalRenderer) {
-            this.originalRenderer = originalRenderer;
-        }
-
-        @Override
-        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
-            if (column == 0) { // Loaded列
-                // 获取原始表头组件作为背景
-                Component originalComponent = originalRenderer.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-
-                // 创建一个面板来包含复选框，保持原始样式
-                JPanel panel = new JPanel(new BorderLayout());
-                panel.setOpaque(true);
-
-                // 复制原始组件的样式
-                if (originalComponent instanceof JComponent origComp) {
-                    panel.setBackground(origComp.getBackground());
-                    panel.setBorder(origComp.getBorder());
-                }
-
-                // 更新复选框状态并添加到面板中心
-                updateHeaderCheckBoxState((DefaultTableModel) table.getModel());
-                headerCheckBox.setOpaque(false);  // 让复选框透明，显示背景
-                panel.add(headerCheckBox, BorderLayout.CENTER);
-
-                return panel;
-            } else {
-                return originalRenderer.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-            }
-        }
-    }
-
-    /**
-     * 切换所有规则的开启/关闭状态
-     */
     private void toggleAllRules(JTable ruleTable) {
         DefaultTableModel model = (DefaultTableModel) ruleTable.getModel();
         int rowCount = model.getRowCount();
@@ -222,7 +311,11 @@ public class Rule extends JPanel {
         for (int i = 0; i < rowCount; i++) {
             dataVector.get(i).set(0, newState);
             // 通知规则处理器更新规则状态
-            ruleProcessor.changeRule(dataVector.get(i), i, getCurrentTabTitle());
+            ruleProcessor.changeRule(
+                    rowToRuleDefinition(dataVector.get(i)),
+                    i,
+                    getCurrentTabTitle()
+            );
         }
 
         // 一次性通知表格数据已更新
@@ -233,9 +326,6 @@ public class Rule extends JPanel {
         ruleTable.getTableHeader().repaint();
     }
 
-    /**
-     * 更新表头复选框的状态
-     */
     private void updateHeaderCheckBoxState(DefaultTableModel model) {
         int rowCount = model.getRowCount();
         if (rowCount == 0) {
@@ -270,61 +360,139 @@ public class Rule extends JPanel {
         }
     }
 
-    /**
-     * 填充Display对象的字段值
-     */
-    private void populateDisplayFromTable(Display ruleDisplay, JTable ruleTable, int selectedRow) {
-        ruleDisplay.ruleNameTextField.setText(ruleTable.getValueAt(selectedRow, 1).toString());
-        ruleDisplay.firstRegexTextField.setText(ruleTable.getValueAt(selectedRow, 2).toString());
-        ruleDisplay.secondRegexTextField.setText(ruleTable.getValueAt(selectedRow, 3).toString());
-        ruleDisplay.formatTextField.setText(ruleTable.getValueAt(selectedRow, 4).toString());
-        ruleDisplay.colorComboBox.setSelectedItem(ruleTable.getValueAt(selectedRow, 5).toString());
-        ruleDisplay.scopeComboBox.setSelectedItem(ruleTable.getValueAt(selectedRow, 6).toString());
-        ruleDisplay.engineComboBox.setSelectedItem(ruleTable.getValueAt(selectedRow, 7).toString());
-        ruleDisplay.sensitiveComboBox.setSelectedItem(ruleTable.getValueAt(selectedRow, 8));
+    private void populateDisplayFromTable(
+            Display ruleDisplay,
+            JTable ruleTable,
+            int selectedRow
+    ) {
+        DefaultTableModel model = (DefaultTableModel) ruleTable.getModel();
+        int modelRow = ruleTable.convertRowIndexToModel(selectedRow);
+        ruleDisplay.ruleNameTextField.setText(
+                model.getValueAt(modelRow, 1).toString()
+        );
+        ruleDisplay.firstRegexTextField.setText(
+                model.getValueAt(modelRow, 2).toString()
+        );
+        ruleDisplay.secondRegexTextField.setText(
+                model.getValueAt(modelRow, 3).toString()
+        );
+        ruleDisplay.formatTextField.setText(
+                model.getValueAt(modelRow, 4).toString()
+        );
+        ruleDisplay.colorComboBox.setSelectedItem(
+                model.getValueAt(modelRow, 5).toString()
+        );
+        ruleDisplay.scopeComboBox.setSelectedItem(
+                model.getValueAt(modelRow, 6).toString()
+        );
+        ruleDisplay.engineComboBox.setSelectedItem(
+                model.getValueAt(modelRow, 7).toString()
+        );
+        ruleDisplay.sensitiveComboBox.setSelectedItem(
+                model.getValueAt(modelRow, 8)
+        );
+        ruleDisplay.validatorTextField.setText(
+                model.getValueAt(modelRow, 9).toString()
+        );
+        ruleDisplay.validatorTimeoutTextField.setText(
+                model.getValueAt(modelRow, 10).toString()
+        );
+        ruleDisplay.validatorBulkTextField.setText(
+                model.getValueAt(modelRow, 11).toString()
+        );
     }
 
-    /**
-     * 从Display对象创建规则数据Vector
-     */
-    private Vector<Object> createRuleDataFromDisplay(Display ruleDisplay) {
-        Vector<Object> ruleData = new Vector<>();
-        ruleData.add(false);
-        ruleData.add(ruleDisplay.ruleNameTextField.getText());
-        ruleData.add(ruleDisplay.firstRegexTextField.getText());
-        ruleData.add(ruleDisplay.secondRegexTextField.getText());
-        ruleData.add(ruleDisplay.formatTextField.getText());
-        ruleData.add(ruleDisplay.colorComboBox.getSelectedItem().toString());
-        ruleData.add(ruleDisplay.scopeComboBox.getSelectedItem().toString());
-        ruleData.add(ruleDisplay.engineComboBox.getSelectedItem().toString());
-        ruleData.add(ruleDisplay.sensitiveComboBox.getSelectedItem());
-        return ruleData;
+    private RuleDefinition createRuleDataFromDisplay(Display ruleDisplay) {
+        int timeout = 0;
+        int bulk = 0;
+        try {
+            timeout = Integer.parseInt(
+                    ruleDisplay.validatorTimeoutTextField.getText().trim()
+            );
+        } catch (NumberFormatException ignored) {
+        }
+        try {
+            bulk = Integer.parseInt(
+                    ruleDisplay.validatorBulkTextField.getText().trim()
+            );
+        } catch (NumberFormatException ignored) {
+        }
+        return new RuleDefinition(
+                false,
+                ruleDisplay.ruleNameTextField.getText(),
+                ruleDisplay.firstRegexTextField.getText(),
+                ruleDisplay.secondRegexTextField.getText(),
+                ruleDisplay.formatTextField.getText(),
+                ruleDisplay.colorComboBox.getSelectedItem().toString(),
+                ruleDisplay.scopeComboBox.getSelectedItem().toString(),
+                ruleDisplay.engineComboBox.getSelectedItem().toString(),
+                (Boolean) ruleDisplay.sensitiveComboBox.getSelectedItem(),
+                ruleDisplay.validatorTextField.getText(),
+                timeout,
+                bulk
+        );
     }
 
-    /**
-     * 显示规则编辑对话框
-     */
     private boolean showRuleDialog(Display ruleDisplay, String title) {
-        ruleDisplay.formatTextField.setEnabled(ruleDisplay.engineComboBox.getSelectedItem().toString().equals("nfa"));
-        int showState = JOptionPane.showConfirmDialog(this, ruleDisplay, title, JOptionPane.YES_NO_OPTION);
+        ruleDisplay.formatTextField.setEnabled(
+                ruleDisplay.engineComboBox
+                        .getSelectedItem()
+                        .toString()
+                        .equals("nfa")
+        );
+        int showState = JOptionPane.showConfirmDialog(
+                this,
+                ruleDisplay,
+                title,
+                JOptionPane.YES_NO_OPTION
+        );
         return showState == YES_OPTION;
     }
 
-    /**
-     * 检查是否有选中的行
-     */
     private boolean hasSelectedRow(JTable ruleTable) {
         return ruleTable.getSelectedRowCount() >= 1;
     }
 
-    /**
-     * 获取当前选中的Tab标题
-     */
     private String getCurrentTabTitle() {
         return tabbedPane.getTitleAt(tabbedPane.getSelectedIndex());
     }
 
-    private void ruleCopyActionPerformed(ActionEvent e, JTable ruleTable, JTabbedPane tabbedPane) {
+    private RuleDefinition rowToRuleDefinition(Vector row) {
+        int timeout = 0;
+        int bulk = 0;
+        Object tObj = row.get(10);
+        Object bObj = row.get(11);
+        if (tObj instanceof Number) timeout = ((Number) tObj).intValue();
+        else try {
+            timeout = Integer.parseInt(tObj.toString().trim());
+        } catch (NumberFormatException ignored) {
+        }
+        if (bObj instanceof Number) bulk = ((Number) bObj).intValue();
+        else try {
+            bulk = Integer.parseInt(bObj.toString().trim());
+        } catch (NumberFormatException ignored) {
+        }
+        return new RuleDefinition(
+                (Boolean) row.get(0),
+                (String) row.get(1),
+                (String) row.get(2),
+                (String) row.get(3),
+                (String) row.get(4),
+                (String) row.get(5),
+                (String) row.get(6),
+                (String) row.get(7),
+                (Boolean) row.get(8),
+                (String) row.get(9),
+                timeout,
+                bulk
+        );
+    }
+
+    private void ruleCopyActionPerformed(
+            ActionEvent e,
+            JTable ruleTable,
+            JTabbedPane tabbedPane
+    ) {
         if (!hasSelectedRow(ruleTable)) {
             return;
         }
@@ -334,12 +502,14 @@ public class Rule extends JPanel {
 
         populateDisplayFromTable(ruleDisplay, ruleTable, selectedRow);
         // 为复制的规则名称添加前缀
-        ruleDisplay.ruleNameTextField.setText(String.format("Copy of %s", ruleDisplay.ruleNameTextField.getText()));
+        ruleDisplay.ruleNameTextField.setText(
+                String.format("Copy of %s", ruleDisplay.ruleNameTextField.getText())
+        );
 
         if (showRuleDialog(ruleDisplay, "Copy Rule")) {
-            Vector<Object> ruleData = createRuleDataFromDisplay(ruleDisplay);
+            RuleDefinition ruleData = createRuleDataFromDisplay(ruleDisplay);
             DefaultTableModel model = (DefaultTableModel) ruleTable.getModel();
-            model.insertRow(model.getRowCount(), ruleData);
+            model.insertRow(model.getRowCount(), ruleData.toObjectArray());
             ruleProcessor.addRule(ruleData, getCurrentTabTitle());
 
             // 复制规则后更新表头复选框状态
@@ -348,14 +518,18 @@ public class Rule extends JPanel {
         }
     }
 
-    private void ruleAddActionPerformed(ActionEvent e, JTable ruleTable, JTabbedPane tabbedPane) {
+    private void ruleAddActionPerformed(
+            ActionEvent e,
+            JTable ruleTable,
+            JTabbedPane tabbedPane
+    ) {
         Display ruleDisplay = new Display();
         ruleDisplay.formatTextField.setText("{0}");
 
         if (showRuleDialog(ruleDisplay, "Add Rule")) {
-            Vector<Object> ruleData = createRuleDataFromDisplay(ruleDisplay);
+            RuleDefinition ruleData = createRuleDataFromDisplay(ruleDisplay);
             DefaultTableModel model = (DefaultTableModel) ruleTable.getModel();
-            model.insertRow(model.getRowCount(), ruleData);
+            model.insertRow(model.getRowCount(), ruleData.toObjectArray());
             ruleProcessor.addRule(ruleData, getCurrentTabTitle());
 
             // 添加规则后更新表头复选框状态
@@ -364,7 +538,11 @@ public class Rule extends JPanel {
         }
     }
 
-    private void ruleEditActionPerformed(ActionEvent e, JTable ruleTable, JTabbedPane tabbedPane) {
+    private void ruleEditActionPerformed(
+            ActionEvent e,
+            JTable ruleTable,
+            JTabbedPane tabbedPane
+    ) {
         if (!hasSelectedRow(ruleTable)) {
             return;
         }
@@ -379,12 +557,17 @@ public class Rule extends JPanel {
             int modelIndex = ruleTable.convertRowIndexToModel(selectedRow);
 
             // 更新表格数据
-            Vector<Object> ruleData = createRuleDataFromDisplay(ruleDisplay);
-            for (int i = 1; i < ruleData.size(); i++) {
-                model.setValueAt(ruleData.get(i), modelIndex, i);
+            RuleDefinition ruleData = createRuleDataFromDisplay(ruleDisplay);
+            Object[] rowArray = ruleData.toObjectArray();
+            for (int i = 1; i < rowArray.length; i++) {
+                model.setValueAt(rowArray[i], modelIndex, i);
             }
 
-            ruleProcessor.changeRule(model.getDataVector().get(modelIndex), modelIndex, getCurrentTabTitle());
+            ruleProcessor.changeRule(
+                    rowToRuleDefinition(model.getDataVector().get(modelIndex)),
+                    modelIndex,
+                    getCurrentTabTitle()
+            );
 
             // 编辑规则后更新表头复选框状态（如果编辑影响了启用状态）
             updateHeaderCheckBoxState(model);
@@ -392,14 +575,28 @@ public class Rule extends JPanel {
         }
     }
 
-    private void ruleRemoveActionPerformed(ActionEvent e, JTable ruleTable, JTabbedPane tabbedPane) {
+    private void ruleRemoveActionPerformed(
+            ActionEvent e,
+            JTable ruleTable,
+            JTabbedPane tabbedPane
+    ) {
         if (!hasSelectedRow(ruleTable)) {
             return;
         }
 
-        if (JOptionPane.showConfirmDialog(this, "Are you sure you want to remove this rule?", "Info", JOptionPane.YES_NO_OPTION) == 0) {
+        if (
+                JOptionPane.showConfirmDialog(
+                        this,
+                        "Are you sure you want to remove this rule?",
+                        "Info",
+                        JOptionPane.YES_NO_OPTION
+                ) ==
+                        0
+        ) {
             DefaultTableModel model = (DefaultTableModel) ruleTable.getModel();
-            int select = ruleTable.convertRowIndexToModel(ruleTable.getSelectedRow());
+            int select = ruleTable.convertRowIndexToModel(
+                    ruleTable.getSelectedRow()
+            );
 
             model.removeRow(select);
             ruleProcessor.removeRule(select, getCurrentTabTitle());
@@ -407,6 +604,65 @@ public class Rule extends JPanel {
             // 删除规则后更新表头复选框状态
             updateHeaderCheckBoxState(model);
             ruleTable.getTableHeader().repaint();
+        }
+    }
+
+    private class HeaderCheckBoxRenderer implements TableCellRenderer {
+
+        private final TableCellRenderer originalRenderer;
+
+        public HeaderCheckBoxRenderer(TableCellRenderer originalRenderer) {
+            this.originalRenderer = originalRenderer;
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(
+                JTable table,
+                Object value,
+                boolean isSelected,
+                boolean hasFocus,
+                int row,
+                int column
+        ) {
+            if (column == 0) {
+                // Loaded列
+                // 获取原始表头组件作为背景
+                Component originalComponent =
+                        originalRenderer.getTableCellRendererComponent(
+                                table,
+                                value,
+                                isSelected,
+                                hasFocus,
+                                row,
+                                column
+                        );
+
+                // 创建一个面板来包含复选框，保持原始样式
+                JPanel panel = new JPanel(new BorderLayout());
+                panel.setOpaque(true);
+
+                // 复制原始组件的样式
+                if (originalComponent instanceof JComponent origComp) {
+                    panel.setBackground(origComp.getBackground());
+                    panel.setBorder(origComp.getBorder());
+                }
+
+                // 更新复选框状态并添加到面板中心
+                updateHeaderCheckBoxState((DefaultTableModel) table.getModel());
+                headerCheckBox.setOpaque(false); // 让复选框透明，显示背景
+                panel.add(headerCheckBox, BorderLayout.CENTER);
+
+                return panel;
+            } else {
+                return originalRenderer.getTableCellRendererComponent(
+                        table,
+                        value,
+                        isSelected,
+                        hasFocus,
+                        row,
+                        column
+                );
+            }
         }
     }
 }

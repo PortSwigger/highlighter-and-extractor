@@ -1,7 +1,8 @@
 package hae.utils;
 
 import burp.api.montoya.MontoyaApi;
-import hae.Config;
+import hae.AppConstants;
+import hae.utils.rule.model.RuleDefinition;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
@@ -16,10 +17,12 @@ import java.nio.file.Paths;
 import java.util.*;
 
 public class ConfigLoader {
+
     private final MontoyaApi api;
     private final Yaml yaml;
     private final String configFilePath;
     private final String rulesFilePath;
+    private volatile Map<String, Object> configCache;
 
     public ConfigLoader(MontoyaApi api) {
         this.api = api;
@@ -30,9 +33,9 @@ public class ConfigLoader {
         this.rulesFilePath = String.format("%s/%s", configPath, "Rules.yml");
 
         // 构造函数，初始化配置
-        File HaEConfigPathFile = new File(configPath);
-        if (!(HaEConfigPathFile.exists() && HaEConfigPathFile.isDirectory())) {
-            HaEConfigPathFile.mkdirs();
+        File configDir = new File(configPath);
+        if (!(configDir.exists() && configDir.isDirectory())) {
+            configDir.mkdirs();
         }
 
         File configFilePath = new File(this.configFilePath);
@@ -44,8 +47,6 @@ public class ConfigLoader {
         if (!(rulesFilePath.exists() && rulesFilePath.isFile())) {
             initRules();
         }
-
-        Config.globalRules = getRules();
     }
 
     private static boolean isValidConfigPath(String configPath) {
@@ -74,7 +75,10 @@ public class ConfigLoader {
 
     private String determineConfigPath() {
         // 优先级1：用户根目录
-        String userConfigPath = String.format("%s/.config/HaE", System.getProperty("user.home"));
+        String userConfigPath = String.format(
+                "%s/.config/HaE",
+                System.getProperty("user.home")
+        );
         if (isValidConfigPath(userConfigPath)) {
             return userConfigPath;
         }
@@ -91,19 +95,25 @@ public class ConfigLoader {
     }
 
     public void initConfig() {
-        Map<String, Object> r = new LinkedHashMap<>();
-        r.put("ExcludeSuffix", getExcludeSuffix());
-        r.put("BlockHost", getBlockHost());
-        r.put("ExcludeStatus", getExcludeStatus());
-        r.put("LimitSize", getLimitSize());
-        r.put("HaEScope", getScope());
-        r.put("DynamicHeader", getDynamicHeader());
+        Map<String, Object> configMap = new LinkedHashMap<>();
+        configMap.put("ExcludeSuffix", getExcludeSuffix());
+        configMap.put("BlockHost", getBlockHost());
+        configMap.put("ExcludeStatus", getExcludeStatus());
+        configMap.put("LimitSize", getLimitSize());
+        configMap.put("HaEScope", getScope());
+        configMap.put("DynamicHeader", getDynamicHeader());
 
         try {
-            Writer ws = new OutputStreamWriter(Files.newOutputStream(Paths.get(configFilePath)), StandardCharsets.UTF_8);
-            yaml.dump(r, ws);
-            ws.close();
-        } catch (Exception ignored) {
+            Writer writer = new OutputStreamWriter(
+                    Files.newOutputStream(Paths.get(configFilePath)),
+                    StandardCharsets.UTF_8
+            );
+            yaml.dump(configMap, writer);
+            writer.close();
+        } catch (Exception e) {
+            api
+                    .logging()
+                    .logToError("Failed to init config: " + e.getMessage());
         }
     }
 
@@ -112,45 +122,47 @@ public class ConfigLoader {
     }
 
     // 获取规则配置
-    public Map<String, Object[][]> getRules() {
-        Map<String, Object[][]> rules = new HashMap<>();
+    public Map<String, List<RuleDefinition>> getRules() {
+        Map<String, List<RuleDefinition>> rules = new HashMap<>();
 
         try {
-            InputStream inputStream = Files.newInputStream(Paths.get(getRulesFilePath()));
+            InputStream inputStream = Files.newInputStream(
+                    Paths.get(getRulesFilePath())
+            );
             Map<String, Object> rulesMap = yaml.load(inputStream);
 
             Object rulesObj = rulesMap.get("rules");
             if (rulesObj instanceof List) {
-                List<Map<String, Object>> groupData = (List<Map<String, Object>>) rulesObj;
+                List<Map<String, Object>> groupData = (List<
+                        Map<String, Object>
+                        >) rulesObj;
                 for (Map<String, Object> groupFields : groupData) {
-                    ArrayList<Object[]> data = new ArrayList<>();
+                    List<RuleDefinition> data = new ArrayList<>();
 
                     Object ruleObj = groupFields.get("rule");
                     if (ruleObj instanceof List) {
-                        List<Map<String, Object>> ruleData = (List<Map<String, Object>>) ruleObj;
+                        List<Map<String, Object>> ruleData = (List<
+                                Map<String, Object>
+                                >) ruleObj;
                         for (Map<String, Object> ruleFields : ruleData) {
-                            Object[] valuesArray = new Object[Config.ruleFields.length];
-                            for (int i = 0; i < Config.ruleFields.length; i++) {
-                                valuesArray[i] = ruleFields.get(Config.ruleFields[i].toLowerCase().replace("-", "_"));
-                            }
-                            data.add(valuesArray);
+                            data.add(RuleDefinition.fromYamlMap(ruleFields));
                         }
                     }
 
-                    Object[][] dataArray = data.toArray(new Object[data.size()][]);
-                    rules.put(groupFields.get("group").toString(), dataArray);
+                    rules.put(groupFields.get("group").toString(), data);
                 }
             }
 
             return rules;
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            api.logging().logToError("Failed to load rules: " + e.getMessage());
         }
 
         return rules;
     }
 
     public String getBlockHost() {
-        return getValueFromConfig("BlockHost", Config.host);
+        return getValueFromConfig("BlockHost", AppConstants.host);
     }
 
     public void setBlockHost(String blockHost) {
@@ -158,7 +170,7 @@ public class ConfigLoader {
     }
 
     public String getExcludeSuffix() {
-        return getValueFromConfig("ExcludeSuffix", Config.suffix);
+        return getValueFromConfig("ExcludeSuffix", AppConstants.suffix);
     }
 
     public void setExcludeSuffix(String excludeSuffix) {
@@ -166,7 +178,7 @@ public class ConfigLoader {
     }
 
     public String getExcludeStatus() {
-        return getValueFromConfig("ExcludeStatus", Config.status);
+        return getValueFromConfig("ExcludeStatus", AppConstants.status);
     }
 
     public void setExcludeStatus(String status) {
@@ -174,7 +186,7 @@ public class ConfigLoader {
     }
 
     public String getDynamicHeader() {
-        return getValueFromConfig("DynamicHeader", Config.header);
+        return getValueFromConfig("DynamicHeader", AppConstants.header);
     }
 
     public void setDynamicHeader(String header) {
@@ -182,7 +194,7 @@ public class ConfigLoader {
     }
 
     public String getLimitSize() {
-        return getValueFromConfig("LimitSize", Config.size);
+        return getValueFromConfig("LimitSize", AppConstants.size);
     }
 
     public void setLimitSize(String size) {
@@ -190,46 +202,65 @@ public class ConfigLoader {
     }
 
     public String getScope() {
-        return getValueFromConfig("HaEScope", Config.scopeOptions);
+        return getValueFromConfig("HaEScope", AppConstants.scopeOptions);
     }
 
     public void setScope(String scope) {
         setValueToConfig("HaEScope", scope);
     }
 
-    public boolean getMode() {
-        return getValueFromConfig("HaEModeStatus", Config.modeStatus).equals("true");
-    }
-
-    public void setMode(String mode) {
-        setValueToConfig("HaEModeStatus", mode);
-    }
-
     private String getValueFromConfig(String name, String defaultValue) {
+        Map<String, Object> configData = getConfigData();
+        if (configData != null && configData.containsKey(name)) {
+            return configData.get(name).toString();
+        }
+        return defaultValue;
+    }
+
+    private Map<String, Object> getConfigData() {
+        Map<String, Object> cached = configCache;
+        if (cached != null) {
+            return cached;
+        }
+
         File yamlSetting = new File(configFilePath);
         if (!yamlSetting.exists() || !yamlSetting.isFile()) {
-            return defaultValue;
+            return null;
         }
 
-        try (InputStream inorder = Files.newInputStream(Paths.get(configFilePath))) {
-            Map<String, Object> r = new Yaml().load(inorder);
-
-            if (r.containsKey(name)) {
-                return r.get(name).toString();
-            }
-        } catch (Exception ignored) {
+        try (
+                InputStream inputStream = Files.newInputStream(
+                        Paths.get(configFilePath)
+                )
+        ) {
+            cached = yaml.load(inputStream);
+            configCache = cached;
+            return cached;
+        } catch (Exception e) {
+            api
+                    .logging()
+                    .logToError("Failed to load config: " + e.getMessage());
         }
 
-        return defaultValue;
+        return null;
     }
 
     private void setValueToConfig(String name, String value) {
         Map<String, Object> currentConfig = loadCurrentConfig();
         currentConfig.put(name, value);
 
-        try (Writer ws = new OutputStreamWriter(Files.newOutputStream(Paths.get(configFilePath)), StandardCharsets.UTF_8)) {
-            yaml.dump(currentConfig, ws);
-        } catch (Exception ignored) {
+        try (
+                Writer writer = new OutputStreamWriter(
+                        Files.newOutputStream(Paths.get(configFilePath)),
+                        StandardCharsets.UTF_8
+                )
+        ) {
+            yaml.dump(currentConfig, writer);
+            configCache = null; // 写入后失效缓存
+        } catch (Exception e) {
+            api
+                    .logging()
+                    .logToError("Failed to save config: " + e.getMessage());
         }
     }
 
@@ -255,10 +286,15 @@ public class ConfigLoader {
     }
 
     private boolean copyRulesToFile(String targetFilePath) {
-        InputStream inputStream = getClass().getClassLoader().getResourceAsStream("rules/Rules.yml");
+        InputStream inputStream = getClass()
+                .getClassLoader()
+                .getResourceAsStream("rules/Rules.yml");
         File targetFile = new File(targetFilePath);
 
-        try (inputStream; OutputStream outputStream = new FileOutputStream(targetFile)) {
+        try (
+                inputStream;
+                OutputStream outputStream = new FileOutputStream(targetFile)
+        ) {
             if (inputStream != null) {
                 byte[] buffer = new byte[1024];
                 int length;
@@ -269,7 +305,10 @@ public class ConfigLoader {
 
                 return true;
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            api
+                    .logging()
+                    .logToError("Failed to copy rules file: " + e.getMessage());
         }
 
         return false;

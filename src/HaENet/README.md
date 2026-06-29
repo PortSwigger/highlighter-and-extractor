@@ -1,7 +1,7 @@
 <div align="center">
 <img src="/resource/image/logo.png" style="width: 20%" />
 <h3>HaE Network</h3>
-<h5>First Author: <a href="https://github.com/gh0stkey">EvilChen</a><br>Second Author: <a href="https://github.com/0chencc">0chencc</a>（Mystery Security Team）<br>Third Author: <a href="https://github.com/vaycore">vaycore</a>（Independent Security Researcher）</h5>
+<h5>First Author: <a href="https://github.com/gh0stkey">EvilChen</a><br>Second Author: <a href="https://github.com/0chencc">0chencc</a>(Mystery Security Team)<br>Third Author: <a href="https://github.com/vaycore">vaycore</a>(Independent Security Researcher)<br>Fourth Author: <a href="https://github.com/shanshanerxi">MingXi</a>(Mystery Security Team)</h5>
 </div>
 
 README Version: \[[English](README.md) | [简体中文](README_CN.md)\]
@@ -31,7 +31,7 @@ GitCode project address: https://gitcode.com/gh0stkey/HaE
 **Plugin Installation**: `Extender - Extensions - Add - Select File - Next`
 
 When you load `HaE` for the first time, it will load the offline rule database from the Jar package. If you need to update the rules, click `Reinit` to reinitialize. The address of the built-in rule database can be found on GitHub:  
-`https://github.com/gh0stkey/HaE/blob/master/src/main/resources/rules/Rules.yml`
+`https://github.com/gh0stkey/HaE/blob/main/src/HaENet/src/main/resources/rules/Rules.yml`
 
 The configuration file (`Config.yml`) and rule file (`Rules.yml`) are stored in a fixed directory:
 
@@ -42,7 +42,7 @@ Alternatively, you can also place the configuration files in the `/.config/HaE/`
 
 ### Rule Definitions
 
-Currently, HaE Network rules consist of 8 fields, with detailed meanings as follows:
+Currently, HaE Network rules consist of 9 fields, with detailed meanings as follows:
 
 | Field     | Meaning                                                      |
 | --------- | ------------------------------------------------------------ |
@@ -54,6 +54,7 @@ Currently, HaE Network rules consist of 8 fields, with detailed meanings as foll
 | Engine    | Regex engine, indicating which engine the current rule's regular expression uses. **DFA engine**: scans each character in the text string only once, fast speed, fewer features; **NFA engine**: repeatedly marks and unmarks characters, slower but richer features (e.g., grouping, replacement, splitting). |
 | Color     | Match color, indicating the highlight color to mark when the current rule matches the corresponding HTTP message. HaE Network has a color upgrade algorithm that automatically upgrades the marking color when the same color appears. |
 | Sensitive | Case sensitivity, indicating whether the current rule is case-sensitive. If sensitive (`True`), it strictly matches the case; if insensitive (`False`), it does not consider case differences. |
+| Validator | External validator for classifying matched data by severity (high/medium/low/none). Contains three sub-settings: **Command** — the validator command that receives match data via stdin (JSON) and returns severity results via stdout; **Timeout** — maximum wait time per execution in milliseconds (default: 5000); **Bulk** — number of matches sent per invocation (default: 500). |
 
 ## Key Features and Advantages
 

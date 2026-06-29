@@ -4,7 +4,10 @@ import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.core.HighlightColor;
 import burp.api.montoya.proxy.websocket.*;
 import hae.instances.http.utils.MessageProcessor;
+import hae.repository.DataRepository;
+import hae.repository.RuleRepository;
 import hae.utils.ConfigLoader;
+import hae.utils.string.StringProcessor;
 
 import java.util.List;
 import java.util.Map;
@@ -12,16 +15,22 @@ import java.util.Map;
 public class WebSocketMessageHandler implements ProxyMessageHandler {
     private final MontoyaApi api;
     private final MessageProcessor messageProcessor;
+    private final String host;
+    private final String url;
 
-    public WebSocketMessageHandler(MontoyaApi api, ConfigLoader configLoader) {
+    public WebSocketMessageHandler(MontoyaApi api, ConfigLoader configLoader,
+                                   DataRepository dataRepository, RuleRepository ruleRepository,
+                                   String url) {
         this.api = api;
-        this.messageProcessor = new MessageProcessor(api, configLoader);
+        this.messageProcessor = new MessageProcessor(api, configLoader, dataRepository, ruleRepository);
+        this.url = url;
+        this.host = StringProcessor.getHostByUrl(url);
     }
 
     @Override
     public TextMessageReceivedAction handleTextMessageReceived(InterceptedTextMessage interceptedTextMessage) {
         String message = interceptedTextMessage.payload();
-        List<Map<String, String>> result = messageProcessor.processMessage("", message, true);
+        List<Map<String, String>> result = messageProcessor.processMessage(host, url, message, true, true, false);
 
         if (result != null && !result.isEmpty()) {
             interceptedTextMessage.annotations().setHighlightColor(HighlightColor.highlightColor(result.get(0).get("color")));
