@@ -135,3 +135,6 @@ gradle-app.setting
 .classpath
 
 # End of https://www.toptal.com/developers/gitignore/api/macos,gradle,jetbrains+all
+
+# Ignore non-BApp related files
+src/HaEFile
